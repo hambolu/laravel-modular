@@ -79,7 +79,7 @@ class MakeModuleCommand extends BaseCommand
                 'Controllers', 'Services', 'Repositories', 'Models',
                 'Actions', 'DTOs', 'Events', 'Listeners', 'Jobs',
                 'Policies', 'Middleware', 'Resources', 'Requests',
-                'Routes', 'Database/migrations', 'Database/seeders',
+                'Routes', 'Database/migrations', 'Database/seeders', 'Observers', 'Notifications', 'Rules', 'Contracts',
                 'Config', 'Lang', 'Tests',
               ];
 

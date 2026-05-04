@@ -12,45 +12,35 @@ abstract class AbstractModule extends ServiceProvider implements ModuleInterface
 {
     use RegistersBindings;
 
-    /**
-     * Services this module exports to other modules.
-     * Only exported services can be accessed via Module::call()
-     */
+    /** Services this module exports to other modules. */
     protected array $exports = [];
 
-    /**
-     * Services to bind in the container (interface => implementation).
-     */
+    /** Interface => Implementation bindings. */
     protected array $bindings = [];
 
-    /**
-     * Services to register as singletons.
-     */
+    /** Services to register as singletons. */
     protected array $singletons = [];
 
-    /**
-     * Middleware to register.
-     */
+    /** Middleware aliases: ['alias' => MiddlewareClass::class] */
     protected array $middleware = [];
 
-    /**
-     * Policies to register [Model::class => Policy::class]
-     */
+    /** Policies: [Model::class => Policy::class] */
     protected array $policies = [];
 
-    /**
-     * Event listeners [Event::class => [Listener::class]]
-     */
+    /** Event listeners: [Event::class => [Listener::class]] */
     protected array $listen = [];
 
-    /**
-     * Commands to register.
-     */
+    /** Artisan commands to register. */
     protected array $commands = [];
+
+    /** Observers: [Model::class => Observer::class] */
+    protected array $observers = [];
+
+    /** API route version prefix (e.g. 'v1'). Falls back to config. */
+    protected ?string $apiVersion = null;
 
     public function getName(): string
     {
-        // Derive module name from class: App\Modules\User\UserModuleProvider => User
         $parts = explode('\\', static::class);
         return $parts[count($parts) - 2] ?? 'Unknown';
     }
@@ -72,10 +62,8 @@ abstract class AbstractModule extends ServiceProvider implements ModuleInterface
 
     public function register(): void
     {
-        // Register with the module registry
         $this->app->make(ModuleRegistry::class)->register($this);
 
-        // Register container bindings
         $this->registerBindings($this->bindings);
         $this->registerSingletons($this->singletons);
     }
@@ -89,6 +77,7 @@ abstract class AbstractModule extends ServiceProvider implements ModuleInterface
         $this->registerPolicies();
         $this->registerListeners();
         $this->registerMiddleware();
+        $this->registerObservers();
 
         if (!empty($this->commands) && $this->app->runningInConsole()) {
             $this->commands($this->commands);
@@ -98,7 +87,7 @@ abstract class AbstractModule extends ServiceProvider implements ModuleInterface
     protected function modulePath(string $path = ''): string
     {
         $reflection = new \ReflectionClass(static::class);
-        $dir = dirname($reflection->getFileName());
+        $dir        = dirname($reflection->getFileName());
         return $path ? $dir . DIRECTORY_SEPARATOR . ltrim($path, '/\\') : $dir;
     }
 
@@ -112,7 +101,14 @@ abstract class AbstractModule extends ServiceProvider implements ModuleInterface
         }
 
         if (file_exists($api)) {
-            Route::prefix('api')
+            $prefix = 'api';
+
+            if (config('modular.versioning.enabled', false)) {
+                $version = $this->apiVersion ?? config('modular.versioning.default', 'v1');
+                $prefix  = "api/{$version}";
+            }
+
+            Route::prefix($prefix)
                 ->middleware('api')
                 ->group($api);
         }
@@ -163,6 +159,13 @@ abstract class AbstractModule extends ServiceProvider implements ModuleInterface
         $router = $this->app['router'];
         foreach ($this->middleware as $alias => $class) {
             $router->aliasMiddleware($alias, $class);
+        }
+    }
+
+    protected function registerObservers(): void
+    {
+        foreach ($this->observers as $model => $observer) {
+            $model::observe($observer);
         }
     }
 }

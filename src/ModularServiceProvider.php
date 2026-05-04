@@ -19,9 +19,16 @@ use LaravelModular\Commands\MakeJobCommand;
 use LaravelModular\Commands\MakePolicyCommand;
 use LaravelModular\Commands\MakeMiddlewareCommand;
 use LaravelModular\Commands\MakeResourceCommand;
+use LaravelModular\Commands\MakeObserverCommand;
+use LaravelModular\Commands\MakeNotificationCommand;
+use LaravelModular\Commands\MakeRuleCommand;
+use LaravelModular\Commands\MakeContractCommand;
 use LaravelModular\Commands\ModuleListCommand;
 use LaravelModular\Commands\ModuleEnableCommand;
 use LaravelModular\Commands\ModuleDisableCommand;
+use LaravelModular\Commands\ModuleInfoCommand;
+use LaravelModular\Commands\ModuleDeleteCommand;
+use LaravelModular\Commands\ModuleMigrateCommand;
 
 class ModularServiceProvider extends ServiceProvider
 {
@@ -41,6 +48,7 @@ class ModularServiceProvider extends ServiceProvider
         $this->registerCommands();
         $this->registerMacros();
         $this->loadModules();
+        $this->registerHealthRoute();
     }
 
     protected function publishConfig(): void
@@ -71,9 +79,16 @@ class ModularServiceProvider extends ServiceProvider
                 MakePolicyCommand::class,
                 MakeMiddlewareCommand::class,
                 MakeResourceCommand::class,
+                MakeObserverCommand::class,
+                MakeNotificationCommand::class,
+                MakeRuleCommand::class,
+                MakeContractCommand::class,
                 ModuleListCommand::class,
                 ModuleEnableCommand::class,
                 ModuleDisableCommand::class,
+                ModuleInfoCommand::class,
+                ModuleDeleteCommand::class,
+                ModuleMigrateCommand::class,
             ]);
         }
     }
@@ -86,5 +101,33 @@ class ModularServiceProvider extends ServiceProvider
     protected function loadModules(): void
     {
         $this->app->make(ModuleLoader::class)->loadAll();
+    }
+
+    protected function registerHealthRoute(): void
+    {
+        if (!config('modular.health.enabled', false)) {
+            return;
+        }
+
+        $route      = config('modular.health.route', '/modular/health');
+        $middleware = config('modular.health.middleware', ['api']);
+
+        $this->app['router']
+            ->middleware($middleware)
+            ->get($route, function () {
+                /** @var ModuleRegistry $registry */
+                $registry = $this->app->make(ModuleRegistry::class);
+                $modules  = collect($registry->all())->map(fn($m) => [
+                    'name'    => $m->getName(),
+                    'exports' => $m->getExports(),
+                    'status'  => 'active',
+                ])->values();
+
+                return response()->json([
+                    'status'  => 'ok',
+                    'modules' => $modules,
+                    'total'   => $modules->count(),
+                ]);
+            });
     }
 }

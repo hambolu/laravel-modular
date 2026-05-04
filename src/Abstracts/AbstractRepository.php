@@ -2,23 +2,34 @@
 
 namespace LaravelModular\Abstracts;
 
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
 use LaravelModular\Traits\Injectable;
 use LaravelModular\Traits\HasCaching;
+use LaravelModular\Traits\HasQueryFilters;
+use LaravelModular\Traits\HasSoftDeleteSupport;
 
 /**
- * Base Repository with full CRUD, pagination, filtering built in.
- * One-line operations for developers.
+ * Base Repository — full CRUD, filtering, sorting, search, soft-deletes.
  */
 abstract class AbstractRepository
 {
-    use Injectable, HasCaching;
+    use Injectable, HasCaching, HasQueryFilters, HasSoftDeleteSupport;
 
     protected string $model;
 
-    protected function query()
+    /** Columns to include in full-text search (override in subclass). */
+    protected array $searchable = [];
+
+    /** Default sort column. */
+    protected string $defaultSort = 'created_at';
+
+    /** Default sort direction. */
+    protected string $defaultSortDirection = 'desc';
+
+    protected function query(): Builder
     {
         return app($this->model)->newQuery();
     }
@@ -52,6 +63,47 @@ abstract class AbstractRepository
         return $q->get();
     }
 
+    /**
+     * Filter, search, sort and paginate in one call.
+     *
+     * @param array  $filters   ['column' => 'value'] or ['column' => ['operator', 'value']]
+     * @param string|null $search  full-text search term (against $searchable columns)
+     * @param array  $sort       ['column' => 'asc|desc'] or ['column', 'direction']
+     * @param int    $perPage
+     */
+    public function filter(
+        array $filters = [],
+        ?string $search = null,
+        array $sort = [],
+        int $perPage = 0,
+    ): LengthAwarePaginator|Collection {
+        $perPage = $perPage ?: config('modular.repository.default_per_page', 15);
+        $q = $this->query();
+
+        if ($filters) {
+            $q = $this->applyFilters($q, $filters);
+        }
+
+        if ($search && $this->searchable) {
+            $q = $this->applySearch($q, $search, $this->searchable);
+        }
+
+        $sort = $sort ?: [$this->defaultSort => $this->defaultSortDirection];
+        $q = $this->applySort($q, $sort);
+
+        return $q->paginate($perPage);
+    }
+
+    public function search(string $term, int $perPage = 0): LengthAwarePaginator
+    {
+        $perPage = $perPage ?: config('modular.repository.default_per_page', 15);
+        $q = $this->query();
+        if ($this->searchable) {
+            $q = $this->applySearch($q, $term, $this->searchable);
+        }
+        return $q->paginate($perPage);
+    }
+
     public function create(array $data): Model
     {
         return $this->query()->create($data);
@@ -69,13 +121,17 @@ abstract class AbstractRepository
         return (bool) $this->query()->where('id', $id)->delete();
     }
 
-    public function paginate(int $perPage = 15, array $columns = ['*']): LengthAwarePaginator
+    public function paginate(int $perPage = 0, array $columns = ['*']): LengthAwarePaginator
     {
-        return $this->query()->paginate($perPage, $columns);
+        $perPage = $perPage ?: config('modular.repository.default_per_page', 15);
+        return $this->query()
+            ->orderBy($this->defaultSort, $this->defaultSortDirection)
+            ->paginate($perPage, $columns);
     }
 
-    public function paginateWhere(array $criteria, int $perPage = 15): LengthAwarePaginator
+    public function paginateWhere(array $criteria, int $perPage = 0): LengthAwarePaginator
     {
+        $perPage = $perPage ?: config('modular.repository.default_per_page', 15);
         $q = $this->query();
         foreach ($criteria as $col => $val) {
             $q->where($col, $val);
@@ -111,23 +167,44 @@ abstract class AbstractRepository
         return $this->query()->updateOrCreate($search, $update);
     }
 
-    /**
-     * Scope queries with array of where conditions or a callable.
-     */
-    public function scope(array|callable $scope): static
-    {
-        // Returns a cloned repository instance with a modified query
-        // For advanced use
-        return $this;
-    }
-
     public function with(array $relations): Collection
     {
         return $this->query()->with($relations)->get();
     }
 
-    public function withPaginated(array $relations, int $perPage = 15): LengthAwarePaginator
+    public function withPaginated(array $relations, int $perPage = 0): LengthAwarePaginator
     {
+        $perPage = $perPage ?: config('modular.repository.default_per_page', 15);
         return $this->query()->with($relations)->paginate($perPage);
+    }
+
+    /** Run a transaction and return its result. */
+    public function transaction(callable $callback): mixed
+    {
+        return \Illuminate\Support\Facades\DB::transaction($callback);
+    }
+
+    /** Bulk insert (no events, fast). */
+    public function insertBulk(array $rows): bool
+    {
+        return $this->query()->insert($rows);
+    }
+
+    /** Chunk through all records without loading into memory. */
+    public function chunk(int $size, callable $callback): void
+    {
+        $this->query()->chunk($size, $callback);
+    }
+
+    /** Get latest N records. */
+    public function latest(int $limit = 10): Collection
+    {
+        return $this->query()->latest()->limit($limit)->get();
+    }
+
+    /** Get oldest N records. */
+    public function oldest(int $limit = 10): Collection
+    {
+        return $this->query()->oldest()->limit($limit)->get();
     }
 }
